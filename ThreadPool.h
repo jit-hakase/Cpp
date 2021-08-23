@@ -9,7 +9,7 @@
 
 class ThreadPool {
 public:
-    bool init(uint32_t size) {
+    void init(uint32_t size) {
         m_size = size;
         for (int idx = 0; idx < size; ++idx) {
             m_thrds.emplace_back(std::thread(std::bind(&ThreadPool::exec_task, this)));
