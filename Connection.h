@@ -1,64 +1,70 @@
 #ifndef UTIL_CONNECTION_H
 #define UTIL_CONNECTION_H
 
-#include "Singleton.h"
 #include "log_std.h"
 
+#include <mutex>
+#include <queue>
+#include <condition_variable>
+
 struct ConnectionInfo {
-    std::string host;
+    std::string host{};
     uint16_t port = 0;
-    std::string user;
-    std::string passwd;
-    std::string dbname;
+    std::string user{};
+    std::string passwd{};
+    std::string dbname{};
 };
 
 template <typename T>
 class ConnectionPool {
 public:
     bool init(ConnectionInfo *info, uint32_t size) {
-        std::lock_guard<std::mutex> lg(m_dba_mtx);
+        std::lock_guard<std::mutex> lg(m_mtx);
         for (int idx = 0; idx < size; ++idx) {
             auto conn = new T;
             if (conn->init(info)) {
-                m_dbas.push(conn);
+                m_conns.push(conn);
             }
         }
-        SQL("ConnectionPool: init connection num[%lu] success", m_dbas.size());
-        return !m_dbas.empty();
+        TRC("Connection: init connection num[%lu] success", m_conns.size());
+        return !m_conns.empty();
     }
 
     void exit() {
-        std::lock_guard<std::mutex> lg(m_dba_mtx);
-        while (!m_dbas.empty()) {
-            auto dba = m_dbas.front();
+        std::lock_guard<std::mutex> lg(m_mtx);
+        while (!m_conns.empty()) {
+            auto dba = m_conns.front();
             dba->exit();
-            m_dbas.pop();
+            m_conns.pop();
         }
     }
 
     T* acquire() {
-        re:
-        {
-            std::lock_guard<std::mutex> lg(m_dba_mtx);
-            if (!m_dbas.empty()) {
-                auto dba = m_dbas.front();
-                m_dbas.pop();
+        std::unique_lock<std::mutex> ul(m_mtx);
+        for (;;) {
+            if (!m_conns.empty()) {
+                auto dba = m_conns.front();
+                m_conns.pop();
+                ul.unlock();
                 return dba;
             }
+            WRN("Connection: wait to acquire...");
+            m_cv.wait(ul);
         }
-        SQL("MySQLConnectionPool: adapter get failed");
-        sleep(2);
-        goto re;
     }
 
     void release(T *dba) {
-        std::lock_guard<std::mutex> lg(m_dba_mtx);
-        m_dbas.push(dba);
+        {
+            std::lock_guard<std::mutex> lg(m_mtx);
+            m_conns.push(dba);
+        }
+        m_cv.notify_one();
     }
 
 private:
-    std::queue<T*> m_dbas;
-    std::mutex m_dba_mtx;
+    std::queue<T*> m_conns;
+    std::mutex m_mtx;
+    std::condition_variable m_cv;
 };
 
 template <typename T>
