@@ -2,6 +2,7 @@
 #define UTIL_CONNECTION_H
 
 #include "log_std.h"
+#include "Singleton.h"
 
 #include <mutex>
 #include <queue>
